@@ -4,9 +4,11 @@ use std::default::Default;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::time::{Duration, Instant};
 
 use futures::{Async, Future, Poll, future, task};
 use http::{self, uri};
+use tokio::timer::Delay;
 use tower_service as tower;
 use tower_h2;
 use tower_reconnect::{Reconnect, Error as ReconnectError};
@@ -14,6 +16,7 @@ use tower_reconnect::{Reconnect, Error as ReconnectError};
 use control;
 use control::destination::Endpoint;
 use ctx;
+use delay_ready::DelayReady;
 use telemetry::{self, sensor};
 use transparency::{self, HttpBody, h1};
 use transport;
@@ -73,12 +76,12 @@ where
     B: tower_h2::Body + Send + 'static,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
 {
-    Bound(Stack<B>),
+    Bound(DelayReady<Stack<B>>),
     BindsPerRequest {
         // When `poll_ready` is called, the _next_ service to be used may be bound
         // ahead-of-time. This stack is used only to serve the next request to this
         // service.
-        next: Option<Stack<B>>
+        next: Option<DelayReady<Stack<B>>>
     },
 }
 
@@ -241,7 +244,8 @@ where
 
     pub fn bind_service(&self, ep: &Endpoint, protocol: &Protocol) -> BoundService<B> {
         let binding = if protocol.can_reuse_clients() {
-            Binding::Bound(self.bind_stack(ep, protocol))
+            let s = DelayReady::immediate(self.bind_stack(ep, protocol));
+            Binding::Bound(s)
         } else {
             Binding::BindsPerRequest {
                 next: None
@@ -376,14 +380,18 @@ where
         let ready = match self.binding {
             // A service is already bound, so poll its readiness.
             Binding::Bound(ref mut svc) |
-            Binding::BindsPerRequest { next: Some(ref mut svc) } => svc.poll_ready(),
+            Binding::BindsPerRequest { next: Some(ref mut svc) } => {
+                trace!("poll_ready: stack already bound");
+                svc.poll_ready()
+            }
 
             // If no stack has been bound, bind it now so that its readiness can be
             // checked. Store it so it can be consumed to dispatch the next request.
             Binding::BindsPerRequest { ref mut next } => {
+                trace!("poll_ready: binding stack");
                 let mut svc = self.bind.bind_stack(&self.endpoint, &self.protocol);
                 let ready = svc.poll_ready();
-                *next = Some(svc);
+                *next = Some(DelayReady::immediate(svc));
                 ready
             }
         };
@@ -400,12 +408,18 @@ where
                 if !self.debounce_connect_error_log {
                     self.debounce_connect_error_log = true;
                     warn!("connect error to {:?}: {}", self.endpoint, err);
+                } else {
+                    debug!("connect error to {:?}: {}", self.endpoint, err);
                 }
                 match self.binding {
                     Binding::Bound(ref mut svc) => {
-                        *svc = self.bind.bind_stack(&self.endpoint, &self.protocol);
+                        trace!("poll_ready: binding stack after error");
+                        let delay = Delay::new(Instant::now() + Duration::from_secs(1));
+                        let stack = self.bind.bind_stack(&self.endpoint, &self.protocol);
+                        *svc = DelayReady::delay(delay, stack);
                     },
                     Binding::BindsPerRequest { ref mut next } => {
+                        trace!("poll_ready: dropping bound stack after error");
                         next.take();
                     }
                 }
@@ -425,6 +439,7 @@ where
             // don't debounce on NotReady...
             Ok(Async::NotReady) => Ok(Async::NotReady),
             other => {
+                trace!("poll_ready: ready for business");
                 self.debounce_connect_error_log = false;
                 other
             },
@@ -442,7 +457,8 @@ where
                 let protocol = &self.protocol;
                 let mut svc = next.take()
                     .unwrap_or_else(|| {
-                        bind.bind_stack(endpoint, protocol)
+                        let s = bind.bind_stack(endpoint, protocol);
+                        DelayReady::immediate(s)
                     });
                 svc.call(request)
             }

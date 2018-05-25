@@ -64,6 +64,7 @@ pub mod config;
 mod connection;
 pub mod control;
 pub mod ctx;
+mod delay_ready;
 mod dns;
 mod drain;
 mod inbound;
