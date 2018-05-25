@@ -34,6 +34,7 @@ where
     S::Future: 'static,
     B: tower_h2::Body,
 {
+    name: &'static str,
     disable_protocol_detection_ports: IndexSet<u16>,
     drain_signal: drain::Watch,
     get_orig_dst: G,
@@ -69,6 +70,7 @@ where
 
    /// Creates a new `Server`.
     pub fn new(
+        name: &'static str,
         listen_addr: SocketAddr,
         proxy_ctx: Arc<ProxyCtx>,
         sensors: Sensors,
@@ -81,6 +83,7 @@ where
         let recv_body_svc = HttpBodyNewSvc::new(stack.clone());
         let tcp = tcp::Proxy::new(tcp_connect_timeout, sensors.clone());
         Server {
+            name,
             disable_protocol_detection_ports,
             drain_signal,
             get_orig_dst,
@@ -199,7 +202,7 @@ where
             });
 
         DefaultExecutor::current()
-            .spawn(Box::new(fut))
+            .spawn(Box::new(::logging::context_future((self.name, remote_addr),  fut)))
             .expect("spawn transparent server task")
     }
 }

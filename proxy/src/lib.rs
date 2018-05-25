@@ -244,6 +244,7 @@ where
                 config.inbound_router_max_idle_age,
             );
             let fut = serve(
+                "inbound",
                 inbound_listener,
                 router,
                 config.private_connect_timeout,
@@ -268,6 +269,7 @@ where
                 config.outbound_router_max_idle_age,
             );
             let fut = serve(
+                "outbound",
                 outbound_listener,
                 router,
                 config.public_connect_timeout,
@@ -334,6 +336,7 @@ where
 }
 
 fn serve<R, B, E, F, G>(
+    proxy_name: &'static str,
     bound_port: BoundPort,
     router: Router<R>,
     tcp_connect_timeout: Duration,
@@ -397,6 +400,7 @@ where
 
     let listen_addr = bound_port.local_addr();
     let server = Server::new(
+        proxy_name,
         listen_addr,
         proxy_ctx,
         sensors,
@@ -406,7 +410,6 @@ where
         disable_protocol_detection_ports,
         drain_rx.clone(),
     );
-
 
     let accept = bound_port.listen_and_fold(
         (),
