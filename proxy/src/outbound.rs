@@ -150,13 +150,16 @@ where
 
         let loaded = tower_balance::load::WithPendingRequests::new(resolve);
 
-
         // We can't use `rand::thread_rng` here because the returned `Service`
         // needs to be `Send`, so instead, we use `LazyRng`, which calls
         // `rand::thread_rng()` when it is *used*.
         let balance = tower_balance::power_of_two_choices(loaded, LazyThreadRng);
 
-        let buffer = Buffer::new(balance, &LazyExecutor)
+        #[derive(Clone, Debug)]
+        struct Out { dest: Destination, proto: bind::Protocol }
+        let ctx = Out { dest: dest.clone(), proto: protocol.clone() };
+
+        let buffer = Buffer::new(balance, &::logging::context_executor(ctx, LazyExecutor))
             .map_err(|_| bind::BufferSpawnError::Outbound)?;
 
         let timeout = Timeout::new(buffer, self.bind_timeout);

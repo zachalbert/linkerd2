@@ -88,7 +88,12 @@ where
 
         let endpoint = (*addr).into();
         let binding = self.bind.bind_service(&endpoint, proto);
-        Buffer::new(binding, &LazyExecutor)
+
+        #[derive(Clone, Debug)]
+        struct In { addr: SocketAddr, proto: bind::Protocol }
+        let ctx = In { addr: *addr, proto: proto.clone() };
+
+        Buffer::new(binding, &::logging::context_executor(ctx, LazyExecutor))
             .map(|buffer| {
                 InFlightLimit::new(buffer, MAX_IN_FLIGHT)
             })
