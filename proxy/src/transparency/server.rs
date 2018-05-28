@@ -39,12 +39,32 @@ where
     drain_signal: drain::Watch,
     get_orig_dst: G,
     h1: hyper::server::conn::Http,
-    h2: tower_h2::Server<HttpBodyNewSvc<S>, LazyExecutor, B>,
+    h2: tower_h2::Server<
+        HttpBodyNewSvc<S>,
+        ::logging::ContextualExecutor<ServeDebug, LazyExecutor>,
+        B
+    >,
     listen_addr: SocketAddr,
     new_service: S,
     proxy_ctx: Arc<ProxyCtx>,
     sensors: Sensors,
     tcp: tcp::Proxy,
+}
+
+#[derive(Clone)]
+pub struct ServeDebug {
+    name: &'static str,
+    addr: SocketAddr,
+}
+
+impl fmt::Debug for ServeDebug {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f, "serve={{proxy={}; addr={}}}",
+            self.name,
+            self.addr,
+        )
+    }
 }
 
 impl<S, B, G> Server<S, B, G>
@@ -82,6 +102,7 @@ where
     ) -> Self {
         let recv_body_svc = HttpBodyNewSvc::new(stack.clone());
         let tcp = tcp::Proxy::new(tcp_connect_timeout, sensors.clone());
+        let executor = ::logging::context_executor(ServeDebug { name, addr: listen_addr }, LazyExecutor);
         Server {
             name,
             disable_protocol_detection_ports,
@@ -91,7 +112,7 @@ where
             h2: tower_h2::Server::new(
                 recv_body_svc,
                 Default::default(),
-                LazyExecutor,
+                executor,
             ),
             listen_addr,
             new_service: stack,

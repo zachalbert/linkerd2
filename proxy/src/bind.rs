@@ -163,7 +163,7 @@ pub struct BindDebug {
 impl fmt::Debug for BindDebug {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
-            f, "client=[proxy={} addr={} proto={:?}]",
+            f, "client={{proxy={}; addr={}; proto={:?}}}",
             if self.ctx.proxy.is_inbound() {
                 "inbound"
             } else {
