@@ -17,6 +17,7 @@ use control;
 use control::destination::Endpoint;
 use ctx;
 use delay_ready::DelayReady;
+use task::LazyExecutor;
 use telemetry::{self, sensor};
 use transparency::{self, HttpBody, h1};
 use transport;
@@ -135,7 +136,11 @@ pub type HttpResponse = http::Response<sensor::http::ResponseBody<HttpBody>>;
 
 pub type HttpRequest<B> = http::Request<sensor::http::RequestBody<B>>;
 
-pub type Client<B> = transparency::Client<sensor::Connect<transport::Connect>, B>;
+pub type Client<B> = transparency::Client<
+    sensor::Connect<transport::Connect>,
+    ::logging::ContextualExecutor<BindDebug, LazyExecutor>,
+    B,
+>;
 
 #[derive(Copy, Clone, Debug)]
 pub enum BufferSpawnError {
@@ -146,6 +151,23 @@ pub enum BufferSpawnError {
 impl fmt::Display for BufferSpawnError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.pad(self.description())
+    }
+}
+
+#[derive(Clone)]
+pub struct BindDebug {
+    ctx: Arc<ctx::transport::Client>,
+    protocol: Protocol,
+}
+
+impl fmt::Debug for BindDebug {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.ctx.proxy.is_inbound() {
+            write!(f, "inbound:")?;
+        } else {
+            write!(f, "outbound:")?;
+        }
+        self.ctx.remote.fmt(f)
     }
 }
 
@@ -221,10 +243,17 @@ where
             &client_ctx,
         );
 
-        let client = transparency::Client::new(
-            protocol,
-            connect,
-        );
+        let client = {
+            let d = BindDebug {
+                ctx: client_ctx.clone(),
+                protocol: protocol.clone(),
+            };
+            transparency::Client::new(
+                protocol,
+                connect,
+                ::logging::context_executor(d, LazyExecutor)
+            )
+        };
 
         let sensors = self.sensors.http(
             self.req_ids.clone(),

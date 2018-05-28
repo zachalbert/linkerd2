@@ -101,6 +101,20 @@ pub struct ContextualExecutor<T, E> {
     executor: E,
 }
 
+impl<T, E> ::tokio::executor::Executor for ContextualExecutor<T, E>
+where
+    T: ::std::fmt::Debug + Send + Sync + 'static,
+    E: ::tokio::executor::Executor,
+{
+    fn spawn(
+        &mut self,
+        future: Box<Future<Item = (), Error = ()> + 'static + Send>
+    ) -> Result<(), ::tokio::executor::SpawnError> {
+        let fut = context_future(self.context.clone(), future);
+        self.executor.spawn(Box::new(fut))
+    }
+}
+
 impl<T, E, F> Executor<F> for ContextualExecutor<T, E>
 where
     T: ::std::fmt::Debug + 'static,
