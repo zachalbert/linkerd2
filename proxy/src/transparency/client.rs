@@ -209,6 +209,8 @@ where
     }
 
     fn call(&mut self, req: Self::Request) -> Self::Future {
+        debug!("ClientService::call method={} uri={} headers={:?} ext={:?}",
+            req.method(), req.uri(), req.headers(), req.extensions());
         match self.inner {
             ClientServiceInner::Http1(ref h1) => {
                 let mut req = hyper::Request::from(req.map(BodyStream::new));
