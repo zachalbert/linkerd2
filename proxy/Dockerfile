@@ -4,7 +4,7 @@
 # This reduces build time and produces binaries with debug symbols, at the expense of
 # runtime perforamnce.
 
-ARG RUST_IMAGE=rust:1.26.2
+ARG RUST_IMAGE=rustlang/rust:nightly
 ARG RUNTIME_IMAGE=gcr.io/runconduit/base:2017-10-30.01
 
 ## Builds the proxy as incrementally as possible.
@@ -61,4 +61,7 @@ RUN if [ -n "$PROXY_UNOPTIMIZED" ]; \
 FROM $RUNTIME_IMAGE as runtime
 COPY --from=build /usr/src/conduit/target/conduit-proxy /usr/local/bin/conduit-proxy
 ENV CONDUIT_PROXY_LOG=warn,conduit_proxy=info
-ENTRYPOINT ["/usr/local/bin/conduit-proxy"]
+
+# memory profiling
+RUN apt-get update && apt-get install -y --no-install-recommends valgrind
+ENTRYPOINT ["valgrind", "--tool=massif", "/usr/local/bin/conduit-proxy"]

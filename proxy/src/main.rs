@@ -1,3 +1,4 @@
+#![feature(alloc_system, allocator_api)]
 #![deny(warnings)]
 
 extern crate conduit_proxy;
@@ -8,6 +9,13 @@ extern crate tokio;
 use std::process;
 
 mod signal;
+
+extern crate alloc_system;
+
+use alloc_system::System;
+
+#[global_allocator]
+static A: System = System;
 
 // Look in lib.rs.
 fn main() {
