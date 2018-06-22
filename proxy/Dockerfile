@@ -63,5 +63,5 @@ COPY --from=build /usr/src/conduit/target/conduit-proxy /usr/local/bin/conduit-p
 ENV CONDUIT_PROXY_LOG=warn,conduit_proxy=info
 
 # memory profiling
-RUN apt-get update && apt-get install -y --no-install-recommends valgrind
-ENTRYPOINT ["valgrind", "--tool=massif", "/usr/local/bin/conduit-proxy"]
+RUN apt-get update && apt-get install -y --no-install-recommends valgrind gdb
+ENTRYPOINT ["valgrind", "--tool=massif", "--massif-out-file=/conduit-proxy.massif.out", "/usr/local/bin/conduit-proxy"]
