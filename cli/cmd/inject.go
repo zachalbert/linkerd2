@@ -16,6 +16,7 @@ import (
 	batchV1 "k8s.io/api/batch/v1"
 	"k8s.io/api/core/v1"
 	"k8s.io/api/extensions/v1beta1"
+	k8sMeta "k8s.io/apimachinery/pkg/api/meta"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	yamlDecoder "k8s.io/apimachinery/pkg/util/yaml"
@@ -26,6 +27,8 @@ const (
 	LocalhostDNSNameOverride = "localhost"
 	// ControlPlanePodName default control plane pod name.
 	ControlPlanePodName = "controller"
+	// The name of the variable used to pass the pod's namespace.
+	PodNamespaceEnvVarName = "CONDUIT_PROXY_POD_NAMESPACE"
 )
 
 type injectOptions struct {
@@ -131,7 +134,10 @@ func injectObjectMeta(t *metaV1.ObjectMeta, k8sLabels map[string]string, options
  * and init-container injected. If the pod is unsuitable for having them
  * injected, return false.
  */
-func injectPodSpec(t *v1.PodSpec, controlPlaneDNSNameOverride string, options *injectOptions) bool {
+func injectPodSpec(t *v1.PodSpec, identity k8s.TLSIdentity, controlPlaneDNSNameOverride string, options *injectOptions) bool {
+	// Pods with `hostNetwork=true` share a network namespace with the host. The
+	// init-container would destroy the iptables configuration on the host, so
+	// skip the injection in this case.
 	if t.HostNetwork {
 		return false
 	}
@@ -212,10 +218,56 @@ func injectPodSpec(t *v1.PodSpec, controlPlaneDNSNameOverride string, options *i
 			{Name: "CONDUIT_PROXY_PRIVATE_LISTENER", Value: fmt.Sprintf("tcp://127.0.0.1:%d", options.outboundPort)},
 			{Name: "CONDUIT_PROXY_PUBLIC_LISTENER", Value: fmt.Sprintf("tcp://0.0.0.0:%d", options.inboundPort)},
 			{
-				Name:      "CONDUIT_PROXY_POD_NAMESPACE",
+				Name:      PodNamespaceEnvVarName,
 				ValueFrom: &v1.EnvVarSource{FieldRef: &v1.ObjectFieldSelector{FieldPath: "metadata.namespace"}},
 			},
 		},
+	}
+
+	if options.enableTLS() {
+		yes := true
+
+		configMapVolume := v1.Volume{
+			Name: "conduit-trust-anchors",
+			VolumeSource: v1.VolumeSource{
+				ConfigMap: &v1.ConfigMapVolumeSource{
+					LocalObjectReference: v1.LocalObjectReference{Name: k8s.TLSTrustAnchorConfigMapName},
+					Optional:             &yes,
+				},
+			},
+		}
+		secretVolume := v1.Volume{
+			Name: "conduit-secrets",
+			VolumeSource: v1.VolumeSource{
+				Secret: &v1.SecretVolumeSource{
+					SecretName: identity.ToSecretName(),
+					Optional:   &yes,
+				},
+			},
+		}
+
+		base := "/var/conduit-io"
+		configMapBase := base + "/trust-anchors"
+		secretBase := base + "/identity"
+		tlsEnvVars := []v1.EnvVar{
+			{Name: "CONDUIT_PROXY_TLS_TRUST_ANCHORS", Value: configMapBase + "/" + k8s.TLSTrustAnchorFileName},
+			{Name: "CONDUIT_PROXY_TLS_CERT", Value: secretBase + "/" + k8s.TLSCertFileName},
+			{Name: "CONDUIT_PROXY_TLS_PRIVATE_KEY", Value: secretBase + "/" + k8s.TLSPrivateKeyFileName},
+			{
+				Name:  "CONDUIT_PROXY_TLS_POD_IDENTITY",
+				Value: identity.ToDNSName(),
+			},
+			{Name: "CONDUIT_PROXY_CONTROLLER_NAMESPACE", Value: controlPlaneNamespace},
+			{Name: "CONDUIT_PROXY_TLS_CONTROLLER_IDENTITY", Value: identity.ToControllerIdentity().ToDNSName()},
+		}
+
+		sidecar.Env = append(sidecar.Env, tlsEnvVars...)
+		sidecar.VolumeMounts = []v1.VolumeMount{
+			{Name: configMapVolume.Name, MountPath: configMapBase, ReadOnly: true},
+			{Name: secretVolume.Name, MountPath: secretBase, ReadOnly: true},
+		}
+
+		t.Volumes = append(t.Volumes, configMapVolume, secretVolume)
 	}
 
 	t.Containers = append(t.Containers, sidecar)
@@ -411,13 +463,29 @@ func injectResource(bytes []byte, options *injectOptions) ([]byte, error) {
 	// original serialization of the original object. Otherwise, output the
 	// serialization of the modified object.
 	output := bytes
-	if podSpec != nil &&
-		injectPodSpec(podSpec, DNSNameOverride, options) {
-		injectObjectMeta(objectMeta, k8sLabels, options)
-		var err error
-		output, err = yaml.Marshal(obj)
+	if podSpec != nil {
+		metaAccessor, err := k8sMeta.Accessor(obj)
 		if err != nil {
 			return nil, err
+		}
+
+		// The namespace isn't necessarily in the input so it has to be substituted
+		// at runtime. The proxy recognizes the "$NAME" syntax for this variable
+		// but not necessarily other variables.
+		identity := k8s.TLSIdentity{
+			Name:                metaAccessor.GetName(),
+			Kind:                k8s.GetOwnerTypeFromLabels(k8sLabels),
+			Namespace:           "$" + PodNamespaceEnvVarName,
+			ControllerNamespace: controlPlaneNamespace,
+		}
+
+		if injectPodSpec(podSpec, identity, DNSNameOverride, options) {
+			injectObjectMeta(objectMeta, k8sLabels, options)
+			var err error
+			output, err = yaml.Marshal(obj)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
