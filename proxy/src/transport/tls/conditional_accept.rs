@@ -22,6 +22,7 @@ pub enum Match {
 /// record, which is what all reasonable implementations do. (If they were not
 /// to, they wouldn't interoperate with picky servers.)
 pub fn match_client_hello(input: &[u8], identity: &Identity) -> Match {
+    trace!("match_client_hello: input={}B", input.len());
     let r = untrusted::Input::from(input).read_all(untrusted::EndOfInput, |input| {
         let r = extract_sni(input);
         input.skip_to_end(); // Ignore anything after what we parsed.
