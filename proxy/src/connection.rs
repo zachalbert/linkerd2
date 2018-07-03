@@ -226,6 +226,9 @@ impl Future for ConditionallyUpgradeServerToTls {
                         let orig_cap = inner.peek_buf.capacity();
                         let sz = try_ready!(inner.socket.read_buf(&mut inner.peek_buf));
                         warn!("ConditionallyUpgradeServerToTls buf={}/{}; sz={}", orig_len, orig_cap, sz);
+                        if sz == 0 {
+                            return Err(io::ErrorKind::BrokenPipe.into());
+                        }
 
                         tls::conditional_accept::match_client_hello(
                             inner.peek_buf.as_ref(), &inner.tls.identity)
