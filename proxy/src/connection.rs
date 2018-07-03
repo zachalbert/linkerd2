@@ -221,7 +221,11 @@ impl Future for ConditionallyUpgradeServerToTls {
                 ConditionallyUpgradeServerToTls::Plaintext(ref mut inner) => {
                     let r = {
                         let inner = inner.as_mut().unwrap();
-                        try_ready!(inner.socket.read_buf(&mut inner.peek_buf));
+
+                        let orig = inner.peek_buf.len();
+                        let sz = try_ready!(inner.socket.read_buf(&mut inner.peek_buf));
+                        warn!("ConditionallyUpgradeServerToTls buf={} + sz={}", orig, sz);
+
                         tls::conditional_accept::match_client_hello(
                             inner.peek_buf.as_ref(), &inner.tls.identity)
                     };
