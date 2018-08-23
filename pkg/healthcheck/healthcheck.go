@@ -82,6 +82,7 @@ type checkObserver func(*CheckResult)
 
 type HealthCheckOptions struct {
 	Namespace                    string
+	DataPlaneNamespace           string
 	KubeConfig                   string
 	APIAddr                      string
 	VersionOverride              string
@@ -244,14 +245,11 @@ func (hc *HealthChecker) addLinkerdDataPlaneChecks() {
 		description: "proxy containers are in ready state",
 		fatal:       true,
 		check: func() error {
-			exists, err := hc.kubeAPI.NamespaceExists(hc.httpClient, hc.Namespace)
+			pods, err := hc.kubeAPI.GetPodsForNamespace(hc.httpClient, hc.DataPlaneNamespace)
 			if err != nil {
 				return err
 			}
-			if !exists {
-				return fmt.Errorf("The \"%s\" namespace does not exist", hc.Namespace)
-			}
-			return nil
+			return validateProxyContainers(pods, hc.DataPlaneNamespace)
 		},
 	})
 }
@@ -425,6 +423,33 @@ func validatePods(pods []v1.Pod) error {
 					container.Name)
 			}
 		}
+	}
+
+	return nil
+}
+
+func validateProxyContainers(pods []v1.Pod, namespace string) error {
+	proxiesFound := 0
+
+	for _, pod := range pods {
+		fmt.Println(pod.Name)
+		if pod.Status.Phase == v1.PodRunning {
+			for _, container := range pod.Status.ContainerStatuses {
+				fmt.Println(" - ", container.Name)
+				if container.Name == "linkerd-proxy" {
+					proxiesFound++
+					if !container.Ready {
+						return fmt.Errorf("Proxy container in po/%s is not ready: %s", pod.Name, container.Name)
+					} else {
+						// fmt.Printf("Proxy container in po/%s is TOTES ready: %s", pod.Name, container.Name)
+					}
+				}
+			}
+		}
+	}
+
+	if proxiesFound == 0 {
+		return fmt.Errorf("Found no proxy containers in namespace [%s]", namespace)
 	}
 
 	return nil

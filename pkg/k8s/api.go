@@ -94,7 +94,12 @@ func (kubeAPI *KubernetesAPI) GetPodsForNamespace(client *http.Client, namespace
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	rsp, err := kubeAPI.getRequest(ctx, client, "/api/v1/namespaces/"+namespace+"/pods")
+	queryPath := "/api/v1/namespaces/" + namespace + "/pods"
+	if namespace == "all" {
+		queryPath = "/api/v1/pods"
+	}
+
+	rsp, err := kubeAPI.getRequest(ctx, client, queryPath)
 	if err != nil {
 		return nil, err
 	}
