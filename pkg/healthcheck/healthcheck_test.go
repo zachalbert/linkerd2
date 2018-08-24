@@ -318,3 +318,50 @@ func TestValidatePods(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateProxyContainers(t *testing.T) {
+	pod := func(name, containerName string, phase v1.PodPhase, ready bool) v1.Pod {
+		return v1.Pod{
+			ObjectMeta: meta.ObjectMeta{Name: name},
+			Status: v1.PodStatus{
+				Phase: phase,
+				ContainerStatuses: []v1.ContainerStatus{
+					v1.ContainerStatus{
+						Name:  containerName,
+						Ready: ready,
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("Returns an error if there are no proxy containers", func(t *testing.T) {
+		pods := []v1.Pod{
+			pod("pod-a", "not-proxy-container", v1.PodRunning, true),
+			pod("pod-b", "not-proxy-container", v1.PodRunning, true),
+		}
+
+		err := validateProxyContainers(pods, "foo")
+		if err == nil {
+			t.Fatal("Expected error, got nothing")
+		}
+		if err.Error() != "Found no proxy containers in namespace [foo]" {
+			t.Fatalf("Unexpected error message: %s", err.Error())
+		}
+	})
+
+	t.Run("Returns an error if not all proxy containers are ready", func(t *testing.T) {
+		pods := []v1.Pod{
+			pod("pod-a", "linkerd-proxy", v1.PodRunning, true),
+			pod("pod-b", "linkerd-proxy", v1.PodRunning, false),
+		}
+
+		err := validateProxyContainers(pods, "foo-bar")
+		if err == nil {
+			t.Fatal("Expected error, got nothing")
+		}
+		if err.Error() != "Proxy container in po/pod-b is not ready: linkerd-proxy" {
+			t.Fatalf("Unexpected error message: %s", err.Error())
+		}
+	})
+}
