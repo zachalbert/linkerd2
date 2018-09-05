@@ -42,6 +42,12 @@ message Pod {
   google.protobuf.Duration uptime = 9; // uptime of this pod
 }
 
+// lists the unmeshed pods that send traffic to the specified resource
+message ListSourcePodsRequest {
+  ResourceSelection selector = 1;
+  string time_window = 2;
+}
+
 message TapRequest {
   option deprecated = true;
 
@@ -345,6 +351,8 @@ service Api {
   rpc StatSummary(StatSummaryRequest) returns (StatSummaryResponse) {}
 
   rpc ListPods(ListPodsRequest) returns (ListPodsResponse) {}
+
+  rpc ListSourcePods(ListSourcePodsRequest) returns (ListPodsResponse) {}
 
   // Superceded by `TapByResource`.
   rpc Tap(TapRequest) returns (stream TapEvent) { option deprecated = true; }

@@ -11,7 +11,6 @@ import (
 	tapPb "github.com/linkerd/linkerd2/controller/gen/controller/tap"
 	pb "github.com/linkerd/linkerd2/controller/gen/public"
 	"github.com/linkerd/linkerd2/controller/k8s"
-	pkgK8s "github.com/linkerd/linkerd2/pkg/k8s"
 	"github.com/linkerd/linkerd2/pkg/version"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	log "github.com/sirupsen/logrus"
@@ -19,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 	k8sV1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/tools/cache"
 )
 
 type (
@@ -51,6 +51,8 @@ func newGrpcServer(
 	controllerNamespace string,
 	ignoredNamespaces []string,
 ) *grpcServer {
+
+	k8sAPI.Pod().Informer().AddIndexers(cache.Indexers{k8s.PodIPIndex: k8s.IndexPodByIP})
 	return &grpcServer{
 		prometheusAPI:       promAPI,
 		tapClient:           tapClient,
@@ -109,43 +111,10 @@ func (s *grpcServer) ListPods(ctx context.Context, req *pb.ListPodsRequest) (*pb
 		if s.shouldIgnore(pod) {
 			continue
 		}
+		item := s.k8sAPI.ToPodProto(pod)
 
 		updated, added := reports[pod.Name]
-
-		status := string(pod.Status.Phase)
-		if pod.DeletionTimestamp != nil {
-			status = "Terminating"
-		}
-
-		controllerComponent := pod.Labels[pkgK8s.ControllerComponentLabel]
-		controllerNS := pod.Labels[pkgK8s.ControllerNSLabel]
-
-		item := &pb.Pod{
-			Name:                pod.Namespace + "/" + pod.Name,
-			Status:              status,
-			PodIP:               pod.Status.PodIP,
-			Added:               added,
-			ControllerNamespace: controllerNS,
-			ControlPlane:        controllerComponent != "",
-		}
-
-		ownerKind, ownerName := s.k8sAPI.GetOwnerKindAndName(pod)
-		namespacedOwnerName := pod.Namespace + "/" + ownerName
-
-		switch ownerKind {
-		case "deployment":
-			item.Owner = &pb.Pod_Deployment{Deployment: namespacedOwnerName}
-		case "replicaset":
-			item.Owner = &pb.Pod_ReplicaSet{ReplicaSet: namespacedOwnerName}
-		case "replicationcontroller":
-			item.Owner = &pb.Pod_ReplicationController{ReplicationController: namespacedOwnerName}
-		case "statefulset":
-			item.Owner = &pb.Pod_StatefulSet{StatefulSet: namespacedOwnerName}
-		case "daemonset":
-			item.Owner = &pb.Pod_DaemonSet{DaemonSet: namespacedOwnerName}
-		case "job":
-			item.Owner = &pb.Pod_Job{Job: namespacedOwnerName}
-		}
+		item.Added = added
 
 		if added {
 			since := time.Since(updated.lastReport)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	proto "github.com/golang/protobuf/proto"
@@ -44,6 +45,7 @@ type rKey struct {
 const (
 	reqQuery             = "sum(increase(response_total%s[%s])) by (%s, classification, tls)"
 	latencyQuantileQuery = "histogram_quantile(%s, sum(irate(response_latency_ms_bucket%s[%s])) by (le, %s))"
+	upstreamsQuery       = "sum(increase(response_total%s[%s])) by (instance, control_plane_ns)"
 
 	promRequests   = promType("QUERY_REQUESTS")
 	promLatencyP50 = promType("0.5")
@@ -139,6 +141,37 @@ func statSummaryError(req *pb.StatSummaryRequest, message string) *pb.StatSummar
 			},
 		},
 	}
+}
+
+func (s *grpcServer) ListSourcePods(ctx context.Context, req *pb.ListSourcePodsRequest) (*pb.ListPodsResponse, error) {
+	podList := make([]*pb.Pod, 0)
+	log.Info(req)
+
+	labels := promQueryLabels(req.GetSelector().GetResource())
+	labels[model.LabelName("direction")] = model.LabelValue("inbound")
+	log.Info(labels)
+
+	promQuery := fmt.Sprintf(upstreamsQuery, labels, req.TimeWindow)
+	log.Info(promQuery)
+	results, err := s.queryProm(ctx, promQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, result := range results {
+		ip := strings.Split(string(result.Metric["instance"]), ":")[0]
+
+		pod, err := s.k8sAPI.PodForIP(ip)
+		if err != nil {
+			return nil, err
+		}
+
+		podList = append(podList, s.k8sAPI.ToPodProto(pod))
+	}
+
+	rsp := pb.ListPodsResponse{Pods: podList}
+
+	return &rsp, nil
 }
 
 func (s *grpcServer) getKubernetesObjectStats(req *pb.StatSummaryRequest) (map[rKey]k8sStat, error) {

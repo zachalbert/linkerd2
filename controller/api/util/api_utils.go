@@ -21,7 +21,7 @@ import (
 */
 
 var (
-	defaultMetricTimeWindow = "1m"
+	DefaultMetricTimeWindow = "1m"
 
 	// ValidTargets specifies resource types allowed as a target:
 	// target resource on an inbound query
@@ -106,7 +106,7 @@ func GRPCError(err error) error {
 }
 
 func BuildStatSummaryRequest(p StatSummaryRequestParams) (*pb.StatSummaryRequest, error) {
-	window := defaultMetricTimeWindow
+	window := DefaultMetricTimeWindow
 	if p.TimeWindow != "" {
 		_, err := time.ParseDuration(p.TimeWindow)
 		if err != nil {

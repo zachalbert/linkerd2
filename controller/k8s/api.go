@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	pb "github.com/linkerd/linkerd2/controller/gen/public"
 	"github.com/linkerd/linkerd2/pkg/k8s"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
@@ -22,6 +23,8 @@ import (
 )
 
 type ApiResource int
+
+const PodIPIndex = "ip"
 
 const (
 	CM ApiResource = iota
@@ -413,4 +416,95 @@ func isPendingOrRunning(pod *apiv1.Pod) bool {
 
 func isFailed(pod *apiv1.Pod) bool {
 	return pod.Status.Phase == apiv1.PodFailed
+}
+
+// PodForIP returns the pod corresponding to a given IP address, if one exists.
+//
+// If multiple pods exist with the same IP address, this may be because some
+// are terminating and the IP has been assigned to a new pod. In this case, we
+// select the running pod, if one currently exists. If there is a single pod
+// which is not running, we return that pod. Otherwise we return `nil`, as we
+// cannot easily determine which pod sent a given request.
+//
+// If no pods were found for the provided IP address, it returns nil. Errors are
+// returned only in the event of an error indexing the pods list.
+func (api *API) PodForIP(ipStr string) (*apiv1.Pod, error) {
+	// ipStr := addr.PublicIPToString(ip)
+	objs, err := api.Pod().Informer().GetIndexer().ByIndex(PodIPIndex, ipStr)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if len(objs) == 1 {
+		log.Debugf("found one pod at IP %s", ipStr)
+		// It's safe to cast elements of `objs` to a `Pod`s here (and in the
+		// loop below). If the object wasn't a pod, it should never have been
+		// indexed by the indexing func in the first place.
+		return objs[0].(*apiv1.Pod), nil
+	}
+
+	for _, obj := range objs {
+		pod := obj.(*apiv1.Pod)
+		if pod.Status.Phase == apiv1.PodRunning {
+			// Found a running pod with this IP --- it's that!
+			log.Debugf("found running pod at IP %s", ipStr)
+			return pod, nil
+		}
+	}
+
+	log.Warnf(
+		"could not uniquely identify pod at %s (found %d pods)",
+		ipStr,
+		len(objs),
+	)
+	return nil, nil
+}
+
+func IndexPodByIP(obj interface{}) ([]string, error) {
+	if pod, ok := obj.(*apiv1.Pod); ok {
+		return []string{pod.Status.PodIP}, nil
+	}
+	return []string{""}, fmt.Errorf("object is not a pod")
+}
+
+/*
+  Extracts information from a Pod for the ListPods and ListSourcePods endpoints
+*/
+func (api *API) ToPodProto(pod *apiv1.Pod) *pb.Pod {
+	status := string(pod.Status.Phase)
+	if pod.DeletionTimestamp != nil {
+		status = "Terminating"
+	}
+
+	controllerComponent := pod.Labels[k8s.ControllerComponentLabel]
+	controllerNS := pod.Labels[k8s.ControllerNSLabel]
+
+	item := &pb.Pod{
+		Name:                pod.Namespace + "/" + pod.Name,
+		Status:              status,
+		PodIP:               pod.Status.PodIP,
+		ControllerNamespace: controllerNS,
+		ControlPlane:        controllerComponent != "",
+	}
+
+	ownerKind, ownerName := api.GetOwnerKindAndName(pod)
+	namespacedOwnerName := pod.Namespace + "/" + ownerName
+
+	switch ownerKind {
+	case "deployment":
+		item.Owner = &pb.Pod_Deployment{Deployment: namespacedOwnerName}
+	case "replicaset":
+		item.Owner = &pb.Pod_ReplicaSet{ReplicaSet: namespacedOwnerName}
+	case "replicationcontroller":
+		item.Owner = &pb.Pod_ReplicationController{ReplicationController: namespacedOwnerName}
+	case "statefulset":
+		item.Owner = &pb.Pod_StatefulSet{StatefulSet: namespacedOwnerName}
+	case "daemonset":
+		item.Owner = &pb.Pod_DaemonSet{DaemonSet: namespacedOwnerName}
+	case "job":
+		item.Owner = &pb.Pod_Job{Job: namespacedOwnerName}
+	}
+
+	return item
 }

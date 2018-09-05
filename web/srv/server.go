@@ -106,6 +106,7 @@ func NewServer(addr, templateDir, staticDir, uuid, controllerNamespace, webpackD
 	// See: https://github.com/linkerd/linkerd2/issues/970
 	server.router.GET("/api/tps-reports", handler.handleApiStat)
 	server.router.GET("/api/pods", handler.handleApiPods)
+	server.router.GET("/api/source-pods", handler.handleApiListSourcePods)
 	server.router.GET("/api/tap", handler.handleApiTap)
 
 	return httpServer

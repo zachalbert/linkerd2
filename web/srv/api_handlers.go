@@ -82,6 +82,43 @@ func (h *handler) handleApiPods(w http.ResponseWriter, req *http.Request, p http
 	renderJsonPb(w, pods)
 }
 
+func (h *handler) handleApiListSourcePods(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
+	resourceType, err := k8s.CanonicalResourceNameFromFriendlyName(req.FormValue("resource_type"))
+	if err != nil {
+		renderJsonError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	window := util.DefaultMetricTimeWindow
+	paramWindow := req.FormValue("window")
+	if paramWindow != "" {
+		_, err := time.ParseDuration(paramWindow)
+		if err != nil {
+			renderJsonError(w, err, http.StatusInternalServerError)
+			return
+		}
+		window = paramWindow
+	}
+
+	upstreams, err := h.apiClient.ListSourcePods(req.Context(), &pb.ListSourcePodsRequest{
+		Selector: &pb.ResourceSelection{
+			Resource: &pb.Resource{
+				Name:      req.FormValue("resource_name"),
+				Type:      resourceType,
+				Namespace: req.FormValue("namespace"),
+			},
+		},
+		TimeWindow: window,
+	})
+
+	if err != nil {
+		renderJsonError(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	renderJsonPb(w, upstreams)
+}
+
 func (h *handler) handleApiStat(w http.ResponseWriter, req *http.Request, p httprouter.Params) {
 	allNs := false
 	if req.FormValue("all_namespaces") == "true" {

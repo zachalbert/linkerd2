@@ -25,7 +25,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-const podIPIndex = "ip"
 const defaultMaxRps = 100.0
 
 type (
@@ -472,7 +471,7 @@ func NewServer(
 	controllerNamespace string,
 	k8sAPI *k8s.API,
 ) (*grpc.Server, net.Listener, error) {
-	k8sAPI.Pod().Informer().AddIndexers(cache.Indexers{podIPIndex: indexPodByIP})
+	k8sAPI.Pod().Informer().AddIndexers(cache.Indexers{k8s.PodIPIndex: k8s.IndexPodByIP})
 
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -488,13 +487,6 @@ func NewServer(
 	pb.RegisterTapServer(s, &srv)
 
 	return s, lis, nil
-}
-
-func indexPodByIP(obj interface{}) ([]string, error) {
-	if pod, ok := obj.(*apiv1.Pod); ok {
-		return []string{pod.Status.PodIP}, nil
-	}
-	return []string{""}, fmt.Errorf("object is not a pod")
 }
 
 // hydrateEventLabels attempts to hydrate the metadata labels for an event's
@@ -542,45 +534,7 @@ func (s *server) hydrateIPLabels(ip *public.IPAddress, labels map[string]string)
 	}
 }
 
-// podForIP returns the pod corresponding to a given IP address, if one exists.
-//
-// If multiple pods exist with the same IP address, this may be because some
-// are terminating and the IP has been assigned to a new pod. In this case, we
-// select the running pod, if one currently exists. If there is a single pod
-// which is not running, we return that pod. Otherwise we return `nil`, as we
-// cannot easily determine which pod sent a given request.
-//
-// If no pods were found for the provided IP address, it returns nil. Errors are
-// returned only in the event of an error indexing the pods list.
 func (s *server) podForIP(ip *public.IPAddress) (*apiv1.Pod, error) {
 	ipStr := addr.PublicIPToString(ip)
-	objs, err := s.k8sAPI.Pod().Informer().GetIndexer().ByIndex(podIPIndex, ipStr)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if len(objs) == 1 {
-		log.Debugf("found one pod at IP %s", ipStr)
-		// It's safe to cast elements of `objs` to a `Pod`s here (and in the
-		// loop below). If the object wasn't a pod, it should never have been
-		// indexed by the indexing func in the first place.
-		return objs[0].(*apiv1.Pod), nil
-	}
-
-	for _, obj := range objs {
-		pod := obj.(*apiv1.Pod)
-		if pod.Status.Phase == apiv1.PodRunning {
-			// Found a running pod with this IP --- it's that!
-			log.Debugf("found running pod at IP %s", ipStr)
-			return pod, nil
-		}
-	}
-
-	log.Warnf(
-		"could not uniquely identify pod at %s (found %d pods)",
-		ipStr,
-		len(objs),
-	)
-	return nil, nil
+	return s.k8sAPI.PodForIP(ipStr)
 }

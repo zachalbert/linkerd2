@@ -17,11 +17,12 @@ import (
 )
 
 var (
-	statSummaryPath   = fullUrlPathFor("StatSummary")
-	versionPath       = fullUrlPathFor("Version")
-	listPodsPath      = fullUrlPathFor("ListPods")
-	tapByResourcePath = fullUrlPathFor("TapByResource")
-	selfCheckPath     = fullUrlPathFor("SelfCheck")
+	statSummaryPath    = fullUrlPathFor("StatSummary")
+	versionPath        = fullUrlPathFor("Version")
+	listPodsPath       = fullUrlPathFor("ListPods")
+	tapByResourcePath  = fullUrlPathFor("TapByResource")
+	selfCheckPath      = fullUrlPathFor("SelfCheck")
+	listSourcePodsPath = fullUrlPathFor("ListSourcePods")
 )
 
 type handler struct {
@@ -50,6 +51,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		h.handleTapByResource(w, req)
 	case selfCheckPath:
 		h.handleSelfCheck(w, req)
+	case listSourcePodsPath:
+		h.handleListSourcePods(w, req)
 	default:
 		http.NotFound(w, req)
 	}
@@ -91,6 +94,25 @@ func (h *handler) handleVersion(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	err = writeProtoToHttpResponse(w, rsp)
+	if err != nil {
+		writeErrorToHttpResponse(w, err)
+		return
+	}
+}
+
+func (h *handler) handleListSourcePods(w http.ResponseWriter, req *http.Request) {
+	var protoRequest pb.ListSourcePodsRequest
+	err := httpRequestToProto(req, &protoRequest)
+	if err != nil {
+		writeErrorToHttpResponse(w, err)
+		return
+	}
+	rsp, err := h.grpcServer.ListSourcePods(req.Context(), &protoRequest)
+	if err != nil {
+		writeErrorToHttpResponse(w, err)
+		return
+	}
 	err = writeProtoToHttpResponse(w, rsp)
 	if err != nil {
 		writeErrorToHttpResponse(w, err)
