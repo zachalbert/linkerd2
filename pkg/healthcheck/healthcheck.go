@@ -154,6 +154,20 @@ func (hc *HealthChecker) addKubernetesAPIChecks() {
 		},
 	})
 
+	hc.checkers = append(hc.checkers, &checker{
+		category:    KubernetesAPICategory,
+		description: "has permissions to create Kubernetes resources for linkerd",
+		fatal:       true,
+		check: func() (err error) {
+			hc.httpClient, err = hc.kubeAPI.NewClient()
+			if err != nil {
+				return
+			}
+			err = hc.kubeAPI.CheckClusterPermissions(hc.httpClient)
+			return
+		},
+	})
+
 	if hc.ShouldCheckKubeVersion {
 		hc.checkers = append(hc.checkers, &checker{
 			category:    KubernetesAPICategory,

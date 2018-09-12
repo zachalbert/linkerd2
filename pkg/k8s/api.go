@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/rest"
 
@@ -85,6 +86,88 @@ func (kubeAPI *KubernetesAPI) CheckProxyVersion(pods []v1.Pod, version string) e
 				}
 			}
 		}
+	}
+
+	return nil
+}
+
+func (kubeAPI *KubernetesAPI) queryResourcePermissions(client *http.Client, path string, expectedPermissions map[string]bool) (map[string]bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rsp, err := kubeAPI.getRequest(ctx, client, path)
+	if err != nil {
+		return expectedPermissions, err
+	}
+	defer rsp.Body.Close()
+
+	if rsp.StatusCode != http.StatusOK {
+		return expectedPermissions, fmt.Errorf("Unexpected Kubernetes API response: %s", rsp.Status)
+	}
+
+	bytes, err := ioutil.ReadAll(rsp.Body)
+	if err != nil {
+		return expectedPermissions, err
+	}
+
+	var resList metav1.APIResourceList
+	err = json.Unmarshal(bytes, &resList)
+	if err != nil {
+		return expectedPermissions, err
+	}
+
+	for _, resource := range resList.APIResources {
+		fmt.Println(resource.Name, resource.Kind, resource.Verbs)
+
+		if _, ok := expectedPermissions[resource.Name]; ok {
+			for _, verb := range resource.Verbs {
+				if verb == "create" {
+					expectedPermissions[resource.Name] = true
+				}
+			}
+		}
+	}
+
+	return expectedPermissions, nil
+}
+
+func (kubeAPI *KubernetesAPI) CheckClusterPermissions(client *http.Client) error {
+	resourcesPath := "/api/v1"                                    // pods, configmaps, namespaces, services, deployments
+	deploymentsPath := "/apis/apps/v1"                            // deployments
+	roleBindingsPath := "/apis/rbac.authorization.k8s.io/v1beta1" // clusterroles, clusterrolebindings
+
+	permissions := map[string]bool{
+		"pods":                false,
+		"configmaps":          false,
+		"namespaces":          false,
+		"services":            false,
+		"serviceaccounts":     false,
+		"deployments":         false,
+		"clusterroles":        false,
+		"clusterrolebindings": false,
+	}
+
+	permissions, err := kubeAPI.queryResourcePermissions(client, resourcesPath, permissions)
+	if err != nil {
+		return err
+	}
+	permissions, err = kubeAPI.queryResourcePermissions(client, deploymentsPath, permissions)
+	if err != nil {
+		return err
+	}
+	permissions, err = kubeAPI.queryResourcePermissions(client, roleBindingsPath, permissions)
+	if err != nil {
+		return err
+	}
+
+	resourcesWithoutPermissions := []string{}
+	for res, present := range permissions {
+		if present == false {
+			resourcesWithoutPermissions = append(resourcesWithoutPermissions, res)
+		}
+	}
+	if len(resourcesWithoutPermissions) > 0 {
+		return fmt.Errorf("The following resources didn't have perms %s", strings.Join(resourcesWithoutPermissions, ", "))
 	}
 
 	return nil
